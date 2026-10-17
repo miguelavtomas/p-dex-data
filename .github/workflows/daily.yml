@@ -1,0 +1,48 @@
+name: Daily prices
+
+on:
+  schedule:
+    - cron: "40 20 * * *" # tcgcsv refreshes around 20:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: TCGdex card database
+        run: |
+          git clone --quiet --depth 1 --filter=blob:none --sparse https://github.com/tcgdex/cards-database cdb
+          git -C cdb sparse-checkout set data
+
+      - name: Build
+        run: |
+          mkdir -p out
+          python3 build.py cdb
+          cp site/* out/
+
+      - name: Sign
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          printf '%s\n' "$SIGNING_KEY" > key.pem
+          openssl pkeyutl -sign -inkey key.pem -rawin -in out/prices.json | base64 -w0 > out/prices.json.sig
+          rm key.pem
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+      - uses: actions/deploy-pages@v4
