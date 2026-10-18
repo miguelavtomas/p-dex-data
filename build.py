@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -123,7 +124,15 @@ def load_database(root):
 # MARK: Matching
 
 def words(s):
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()  # Pokémon → Pokemon
     return [w for w in re.split(r"[^a-z0-9]+", s.lower()) if w and w != "pokemon"]
+
+
+def same_name(ours, theirs):
+    """Every word of one name in the other: "Surfing Pikachu" / "Pikachu (Surfing)",
+    "Fire Energy" / "Basic Fire Energy", "Turtwig" / "Turtwig - 4/25"."""
+    a, b = set(words(ours)), set(words(theirs))
+    return bool(a) and bool(b) and (a <= b or b <= a)
 
 
 def plain_number(s):
@@ -143,16 +152,17 @@ def group_for(set_id, set_info, groups_by_id, groups):
     return min(fits, key=lambda g: len(words(g["name"])))["groupId"] if fits else None
 
 
+def fits(card, product):
+    return plain_number(product["number"]) == plain_number(card["localId"]) and same_name(card["name"], product["name"])
+
+
 def product_for(card, products):
-    """The group's product with this card's number, preferring the one named like the card."""
-    number = plain_number(card["localId"])
-    same = [p for p in products if plain_number(p["number"]) == number]
+    """The group's one product with this card's number and name (set, then number, then name);
+    among several, the plain one (no "(Prerelease)", "[Staff]"…). None when it stays ambiguous."""
+    same = [p for p in products if fits(card, p)]
     if len(same) > 1:
-        named = [p for p in same if p["name"].lower().startswith(card["name"].lower())]
-        same = named or same
-        plain = [p for p in same if "(" not in p["name"]]
-        same = plain or same
-    return same[0]["productId"] if same else None
+        same = [p for p in same if "(" not in p["name"] and "[" not in p["name"]]
+    return same[0]["productId"] if len(same) == 1 else None
 
 
 # MARK: Build
@@ -176,7 +186,7 @@ def main():
         for p in products:
             number = next((e["value"] for e in p.get("extendedData", []) if e["name"] == "Number"), None)
             if number:
-                numbered.append({"productId": p["productId"], "name": p["name"], "number": number})
+                numbered.append({"productId": p["productId"], "name": p["name"], "number": number, "groupId": group_id})
         return group_id, numbered, prices
 
     with ThreadPoolExecutor(6) as pool:
@@ -200,16 +210,34 @@ def main():
         by_expansion.setdefault((p["idExpansion"], base), []).append(p["idProduct"])
     print(f"Cardmarket: {len(cm_prices)} priced products, guide of {guide.get('createdAt')}")
 
-    # Link the cards TCGdex hasn't.
+    # TCGdex's links, checked: a product whose number and name both differ from the card's is
+    # another card (Scorbunny → Litten); one in the card's own set with its number and name wins.
     linked = {"tcgplayer": 0, "cardmarket": 0}
+    fixed, dropped = [], []
     set_groups = {sid: group_for(sid, info, groups_by_id, groups) for sid, info in sets.items()}
+    product_info = {p["productId"]: p for products in group_products.values() for p in products}
+    for card_id, card in cards.items():
+        group = set_groups.get(card["set"])
+        match = product_for(card, group_products.get(group, [])) if group else None
+        if "tcgplayer" in card:
+            theirs = product_info.get(card["tcgplayer"])
+            # Kept when it's this card (number and name) in its own set; replaced when it isn't
+            # this card, or sits in another set while the card's own set has exactly one match.
+            wrong = theirs and not fits(card, theirs)
+            elsewhere = theirs and theirs["groupId"] != group
+            if match and match != card["tcgplayer"] and (wrong or elsewhere):
+                fixed.append(f"{card_id} {card['name']}: {theirs['name']} → {product_info[match]['name']}")
+                card["tcgplayer"] = match
+            elif wrong and not same_name(card["name"], theirs["name"]) \
+                    and plain_number(theirs["number"]) != plain_number(card["localId"]):
+                dropped.append(f"{card_id} {card['name']}: not {theirs['name']}")
+                del card["tcgplayer"]
+        elif match:
+            card["tcgplayer"] = match
+            linked["tcgplayer"] += 1
+    for line in fixed + dropped:
+        print("  TCGplayer link " + ("fixed: " if line in fixed else "dropped: ") + line)
     for card in cards.values():
-        if "tcgplayer" not in card:
-            group = set_groups.get(card["set"])
-            product = group and product_for(card, group_products.get(group, []))
-            if product:
-                card["tcgplayer"] = product
-                linked["tcgplayer"] += 1
         if "cardmarket" not in card:
             expansion = sets[card["set"]].get("cardmarket")
             found = by_expansion.get((expansion, card["name"].lower()), []) if expansion else []
