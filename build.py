@@ -21,19 +21,19 @@ import json
 import os
 import re
 import sys
-import difflib
 import time
-import unicodedata
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import urllib.error
+
+import linking
 from datetime import datetime, timedelta, timezone
 
 TCGCSV = "https://tcgcsv.com/tcgplayer/3"
 CARDMARKET_GUIDE = "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_6.json"
 CARDMARKET_PRODUCTS = "https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_6.json"
 
-# TCGdex set id -> TCGplayer group name, where the names don't match on their own.
+# TCGdex set id -> TCGplayer group name, where the names don't match on their own (linking.py).
 GROUP_ALIASES = {
     "2021swsh": "McDonald's 25th Anniversary Promos",
     "mep": "ME: Mega Evolution Promo",
@@ -45,7 +45,23 @@ SITE = "https://miguelavtomas.github.io/p-dex-data"
 HISTORY_DAYS = 400
 
 
+CACHE = os.environ.get("PDEX_CACHE")  # local runs: keep each download for 20 hours (tcgcsv asks for one a day)
+
+
 def get_json(url, tries=3):
+    if CACHE:
+        import hashlib
+        path = os.path.join(CACHE, hashlib.sha1(url.encode()).hexdigest() + ".json")
+        if os.path.exists(path) and time.time() - os.path.getmtime(path) < 20 * 3600:
+            return json.load(open(path))
+        data = fetch_json(url, tries)
+        os.makedirs(CACHE, exist_ok=True)
+        json.dump(data, open(path, "w"))
+        return data
+    return fetch_json(url, tries)
+
+
+def fetch_json(url, tries=3):
     for attempt in range(tries):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "p-dex-data (daily price file)"})
@@ -67,6 +83,18 @@ def ts_block(text, key, indent):
     depth, i = 1, m.end()
     while depth and i < len(text):
         depth += {"{": 1, "}": -1}.get(text[i], 0)
+        i += 1
+    return text[m.end():i - 1]
+
+
+def ts_block_list(text, key):
+    """The `[ ... ]` after `key:` at the card's top level, or ""."""
+    m = re.search(r"^\t%s:\s*\[" % key, text, re.M)
+    if not m:
+        return ""
+    depth, i = 1, m.end()
+    while depth and i < len(text):
+        depth += {"[": 1, "]": -1}.get(text[i], 0)
         i += 1
     return text[m.end():i - 1]
 
@@ -121,110 +149,14 @@ def load_database(root):
                 if len(ids) < 2:
                     for block in re.finditer(r"^\t{3}thirdParty:\s*\{([^}]*)\}", text, re.M):
                         ids = {**ids_in(block.group(1)), **ids}
-                cards[f"{set_id}-{local_id}"] = {"set": set_id, "localId": local_id, "name": card_name, **ids}
+                # Abilities then attacks, as Cardmarket lists them after the name.
+                attacks = []
+                for block in ("abilities", "attacks"):
+                    part = ts_block_list(text, block)
+                    attacks += [m.group(2) for m in re.finditer(r"name:\s*\{\s*en:\s*(['\"])(.*?)\1", part)]
+                cards[f"{set_id}-{local_id}"] = {"set": set_id, "localId": local_id, "name": card_name, "attacks": attacks,
+                                                 **{"tcgdex" + k.capitalize(): v for k, v in ids.items()}}
     return sets, cards
-
-
-# MARK: Matching
-
-def words(s):
-    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()  # Pokémon → Pokemon
-    return [w for w in re.split(r"[^a-z0-9]+", s.lower()) if w and w != "pokemon"]
-
-
-def same_name(ours, theirs):
-    """Every word of one name in the other: "Surfing Pikachu" / "Pikachu (Surfing)",
-    "Fire Energy" / "Basic Fire Energy", "Turtwig" / "Turtwig - 4/25"."""
-    a, b = set(words(ours)), set(words(theirs))
-    return bool(a) and bool(b) and (a <= b or b <= a)
-
-
-def plain_number(s):
-    s = (s or "").split("/")[0].strip().lower()
-    stripped = s.lstrip("0")
-    return stripped or s
-
-
-def group_for(set_id, set_info, groups_by_id, groups):
-    if set_info.get("tcgplayer") in groups_by_id:
-        return set_info["tcgplayer"]
-    alias = GROUP_ALIASES.get(set_id)
-    if alias:
-        return next((g["groupId"] for g in groups if g["name"] == alias), None)
-    ours = set(words(set_info["name"]))
-    fits = [g for g in groups if ours and ours <= set(words(g["name"]))]
-    return min(fits, key=lambda g: len(words(g["name"])))["groupId"] if fits else None
-
-
-def fits(card, product):
-    return plain_number(product["number"]) == plain_number(card["localId"]) and same_name(card["name"], product["name"])
-
-
-def product_for(card, products):
-    """The group's one product with this card's number and name (set, then number, then name);
-    among several, the plain one (no "(Prerelease)", "[Staff]"…). None when it stays ambiguous."""
-    same = [p for p in products if fits(card, p)]
-    if len(same) > 1:
-        same = [p for p in same if "(" not in p["name"] and "[" not in p["name"]]
-    return same[0]["productId"] if len(same) == 1 else None
-
-
-def cardmarket_name(product):
-    """"Mew [Clairvoyance | Psychic]" → "Mew"; "Floatzel Lv.29" → "Floatzel"; "Muk (V.2)" → "Muk"."""
-    name = re.sub(r"\s*\[[^\[\]]*\]\s*$", "", product["name"])  # the attacks, last
-    name = re.sub(r"\[([^\[\]|]{1,3})\]", r"\1", name)            # "Unown [M]", "Chatot [G]", "[FB]"
-    name = re.sub(r"\s+-\s+.*$", "", name)  # "Professor's Research - Professor Sada"
-    name = re.sub(r"\s+Lv\.?\s*(\d+|X)\b", lambda m: " LV.X" if m.group(1) == "X" else "", name)
-    return re.sub(r"\s*\(V\.\d+\)", "", name).strip()
-
-
-ENERGY_CODES = {"G": "grass", "R": "fire", "W": "water", "L": "lightning", "P": "psychic",
-                "F": "fighting", "D": "darkness", "M": "metal", "Y": "fairy", "C": "colorless"}
-
-
-def canonical(name):
-    """The same card's name however it's written: symbols spelled out (☆ = Gold Star, ♀ = [F],
-    α = alpha), energy codes ("Rocky [F] Energy"), and the words one site adds ("δ Delta Species",
-    "Basic Grass Energy")."""
-    name = (name.replace("☆", " star ").replace("Gold Star", " star ").replace("♀", " F").replace("♂", " M")
-            .replace("α", " alpha").replace("β", " beta").replace("Ω", " omega").replace("δ", " delta "))
-    name = re.sub(r"\b([GRWLPFDMYC])\s+Energy\b", lambda m: ENERGY_CODES[m.group(1)] + " Energy", name)
-    extra = {"delta", "species", "basic"}
-    return " ".join(w for w in words(name) if w not in extra)
-
-
-def same_cardmarket_name(ours, theirs):
-    """Cardmarket names a card exactly (no "- 4/25" or "(Holo)" around it), so the names must be
-    the same, give or take a spelling ("Impostor" / "Imposter") — not one inside the other
-    ("Rayquaza" isn't "Rayquaza EX")."""
-    a, b = canonical(ours), canonical(theirs)
-    if a.replace(" ", "") == b.replace(" ", ""):  # "M Tyranitar EX" / "MTyranitar EX"
-        return True
-    return a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.85 and len(a.split()) == len(b.split())
-
-
-def check_cardmarket_links(cards, sets, cm_products):
-    """TCGdex's Cardmarket links, checked. Dropped: a product named differently from the card
-    (Mewtwo → Mew), and a product two cards of a set share, but for the first of them (a secret
-    rare linked to the regular card). Returns the dropped links, for the log."""
-    products = {p["idProduct"]: p for p in cm_products}
-    dropped = []
-    for card_id, card in cards.items():
-        product = products.get(card.get("cardmarket"))
-        if product and not same_cardmarket_name(card["name"], cardmarket_name(product)):
-            dropped.append(f"{card_id} {card['name']}: not {product['name']}")
-            del card["cardmarket"]
-    sharing = {}
-    for card_id, card in cards.items():
-        if card.get("cardmarket"):
-            sharing.setdefault((card["set"], card["cardmarket"]), []).append(card_id)
-    for ids in sharing.values():
-        if len(ids) > 1:
-            ids.sort(key=lambda i: (len(cards[i]["localId"]), cards[i]["localId"]))
-            for card_id in ids[1:]:
-                dropped.append(f"{card_id} {cards[card_id]['name']}: shares {ids[0]}'s product")
-                del cards[card_id]["cardmarket"]
-    return dropped
 
 
 # MARK: History
@@ -334,50 +266,43 @@ def main():
     guide = get_json(CARDMARKET_GUIDE)
     cm_prices = {g["idProduct"]: g for g in guide["priceGuides"]}
     cm_products = get_json(CARDMARKET_PRODUCTS)["products"]
-    by_expansion = {}
-    for p in cm_products:
-        by_expansion.setdefault((p["idExpansion"], canonical(cardmarket_name(p))), []).append(p["idProduct"])
     print(f"Cardmarket: {len(cm_prices)} priced products, guide of {guide.get('createdAt')}")
-    cm_dropped = check_cardmarket_links(cards, sets, cm_products)
-    print(f"Cardmarket links dropped: {len(cm_dropped)}")
-    for line in cm_dropped:
-        print("  Cardmarket link dropped: " + line)
 
-    # TCGdex's links, checked: a product whose number and name both differ from the card's is
-    # another card (Scorbunny → Litten); one in the card's own set with its number and name wins.
-    linked = {"tcgplayer": 0, "cardmarket": 0}
-    fixed, dropped = [], []
-    set_groups = {sid: group_for(sid, info, groups_by_id, groups) for sid, info in sets.items()}
-    product_info = {p["productId"]: p for products in group_products.values() for p in products}
+    # The links, built from what each source says (see linking.py), then hand corrections.
+    tcg_links = linking.link_tcgplayer(cards, sets, groups, group_products, GROUP_ALIASES)
+    tcg_overrides = linking.apply_overrides(tcg_links, "tcgplayer")
+
+    def usd_of(card_id):
+        """The card's base printing on TCGplayer: only to compare the markets while linking."""
+        entries = tcg_prices.get(tcg_links.get(card_id, (None,))[0], {})
+        values = [e.get("marketPrice") for k, e in entries.items() if "reverse" not in k and e.get("marketPrice")]
+        return min(values) if values else None
+
+    def eur_of(product_id):
+        g = cm_prices.get(product_id) or {}
+        trend, month = g.get("trend"), g.get("avg30") or g.get("avg7")
+        if trend and month and (trend < month / 4 or trend > month * 4):
+            return g.get("avg7") or g.get("avg30")
+        return trend or g.get("avg7") or g.get("avg30")
+
+    cm_links = linking.link_cardmarket(cards, sets, cm_products, eur_of, usd_of)
+    cm_overrides = linking.apply_overrides(cm_links, "cardmarket")
+    for market, links, overrides in (("TCGplayer", tcg_links, tcg_overrides), ("Cardmarket", cm_links, cm_overrides)):
+        methods = {}
+        for _, method in links.values():
+            methods[method] = methods.get(method, 0) + 1
+        print(f"{market} links: {len(links)} ({overrides} by hand) — " + ", ".join(f"{m} {n}" for m, n in sorted(methods.items(), key=lambda kv: -kv[1])))
+    changed = [f"{cid} {c['name']}: TCGdex {c.get('tcgdexCardmarket')} → {cm_links.get(cid, (None,))[0]}"
+               for cid, c in cards.items() if c.get("tcgdexCardmarket") and c.get("tcgdexCardmarket") != cm_links.get(cid, (None,))[0]]
+    print(f"Cardmarket links that differ from TCGdex's: {len(changed)}")
+
+    # Hand-checked links every build must reproduce.
+    wrong = linking.check_golden(tcg_links, cm_links)
+    if wrong:
+        sys.exit("Golden links broken, not publishing:\n  " + "\n  ".join(wrong))
     for card_id, card in cards.items():
-        group = set_groups.get(card["set"])
-        match = product_for(card, group_products.get(group, [])) if group else None
-        if "tcgplayer" in card:
-            theirs = product_info.get(card["tcgplayer"])
-            # Kept when it's this card (number and name) in its own set; replaced when it isn't
-            # this card, or sits in another set while the card's own set has exactly one match.
-            wrong = theirs and not fits(card, theirs)
-            elsewhere = theirs and theirs["groupId"] != group
-            if match and match != card["tcgplayer"] and (wrong or elsewhere):
-                fixed.append(f"{card_id} {card['name']}: {theirs['name']} → {product_info[match]['name']}")
-                card["tcgplayer"] = match
-            elif wrong and not same_name(card["name"], theirs["name"]) \
-                    and plain_number(theirs["number"]) != plain_number(card["localId"]):
-                dropped.append(f"{card_id} {card['name']}: not {theirs['name']}")
-                del card["tcgplayer"]
-        elif match:
-            card["tcgplayer"] = match
-            linked["tcgplayer"] += 1
-    for line in fixed + dropped:
-        print("  TCGplayer link " + ("fixed: " if line in fixed else "dropped: ") + line)
-    for card in cards.values():
-        if "cardmarket" not in card:
-            expansion = sets[card["set"]].get("cardmarket")
-            found = by_expansion.get((expansion, canonical(card["name"])), []) if expansion else []
-            if len(found) == 1:
-                card["cardmarket"] = found[0]
-                linked["cardmarket"] += 1
-    print(f"Linked here: {linked['tcgplayer']} TCGplayer, {linked['cardmarket']} Cardmarket")
+        card["tcgplayer"] = tcg_links.get(card_id, (None,))[0]
+        card["cardmarket"] = cm_links.get(card_id, (None,))[0]
 
     out = {}
     counts = {"tcgplayer": 0, "cardmarket": 0, "any": 0}
@@ -416,7 +341,9 @@ def main():
     print(f"Flagged (markets more than 4× apart): {len(flagged)}")
     os.makedirs("out", exist_ok=True)
     with open("out/quality.json", "w") as f:
-        json.dump({"cardmarketLinksDropped": cm_dropped, "flagged": flagged}, f, indent=1, ensure_ascii=False)
+        json.dump({"cardmarketDifferFromTCGdex": changed, "flagged": flagged}, f, indent=1, ensure_ascii=False)
+    with open("out/links.json", "w") as f:
+        json.dump({cid: {"tcgplayer": tcg_links.get(cid), "cardmarket": cm_links.get(cid)} for cid in sorted(cards)}, f, separators=(",", ":"))
 
     # History per set: today's column added to what's published; 7- and 30-day figures from it.
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")

@@ -2,6 +2,11 @@
 
 The daily price file the P-Dex app reads, built by `.github/workflows/daily.yml`.
 
+How cards are linked to each market, and why: see `linking.py`. `overrides.json` corrects a link by
+hand; `golden.json` lists hand-checked links every build must reproduce (it refuses to publish otherwise).
+`links.json` (published) shows each card's links and the method behind them; `quality.json` the cards
+whose markets are far apart and the Cardmarket links that differ from TCGdex's.
+
 Sources: [TCGdex](https://github.com/tcgdex/cards-database) for card and product ids,
 [tcgcsv.com](https://tcgcsv.com) for TCGplayer prices, Cardmarket's public price guide.
 Files are signed (Ed25519, `<file>.sig`); the app ignores one whose signature doesn't verify.
