@@ -21,6 +21,7 @@ import json
 import os
 import re
 import sys
+import difflib
 import time
 import unicodedata
 import urllib.request
@@ -168,6 +169,64 @@ def product_for(card, products):
     return same[0]["productId"] if len(same) == 1 else None
 
 
+def cardmarket_name(product):
+    """"Mew [Clairvoyance | Psychic]" → "Mew"; "Floatzel Lv.29" → "Floatzel"; "Muk (V.2)" → "Muk"."""
+    name = re.sub(r"\s*\[[^\[\]]*\]\s*$", "", product["name"])  # the attacks, last
+    name = re.sub(r"\[([^\[\]|]{1,3})\]", r"\1", name)            # "Unown [M]", "Chatot [G]", "[FB]"
+    name = re.sub(r"\s+-\s+.*$", "", name)  # "Professor's Research - Professor Sada"
+    name = re.sub(r"\s+Lv\.?\s*(\d+|X)\b", lambda m: " LV.X" if m.group(1) == "X" else "", name)
+    return re.sub(r"\s*\(V\.\d+\)", "", name).strip()
+
+
+ENERGY_CODES = {"G": "grass", "R": "fire", "W": "water", "L": "lightning", "P": "psychic",
+                "F": "fighting", "D": "darkness", "M": "metal", "Y": "fairy", "C": "colorless"}
+
+
+def canonical(name):
+    """The same card's name however it's written: symbols spelled out (☆ = Gold Star, ♀ = [F],
+    α = alpha), energy codes ("Rocky [F] Energy"), and the words one site adds ("δ Delta Species",
+    "Basic Grass Energy")."""
+    name = (name.replace("☆", " star ").replace("Gold Star", " star ").replace("♀", " F").replace("♂", " M")
+            .replace("α", " alpha").replace("β", " beta").replace("Ω", " omega").replace("δ", " delta "))
+    name = re.sub(r"\b([GRWLPFDMYC])\s+Energy\b", lambda m: ENERGY_CODES[m.group(1)] + " Energy", name)
+    extra = {"delta", "species", "basic"}
+    return " ".join(w for w in words(name) if w not in extra)
+
+
+def same_cardmarket_name(ours, theirs):
+    """Cardmarket names a card exactly (no "- 4/25" or "(Holo)" around it), so the names must be
+    the same, give or take a spelling ("Impostor" / "Imposter") — not one inside the other
+    ("Rayquaza" isn't "Rayquaza EX")."""
+    a, b = canonical(ours), canonical(theirs)
+    if a.replace(" ", "") == b.replace(" ", ""):  # "M Tyranitar EX" / "MTyranitar EX"
+        return True
+    return a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.85 and len(a.split()) == len(b.split())
+
+
+def check_cardmarket_links(cards, sets, cm_products):
+    """TCGdex's Cardmarket links, checked. Dropped: a product named differently from the card
+    (Mewtwo → Mew), and a product two cards of a set share, but for the first of them (a secret
+    rare linked to the regular card). Returns the dropped links, for the log."""
+    products = {p["idProduct"]: p for p in cm_products}
+    dropped = []
+    for card_id, card in cards.items():
+        product = products.get(card.get("cardmarket"))
+        if product and not same_cardmarket_name(card["name"], cardmarket_name(product)):
+            dropped.append(f"{card_id} {card['name']}: not {product['name']}")
+            del card["cardmarket"]
+    sharing = {}
+    for card_id, card in cards.items():
+        if card.get("cardmarket"):
+            sharing.setdefault((card["set"], card["cardmarket"]), []).append(card_id)
+    for ids in sharing.values():
+        if len(ids) > 1:
+            ids.sort(key=lambda i: (len(cards[i]["localId"]), cards[i]["localId"]))
+            for card_id in ids[1:]:
+                dropped.append(f"{card_id} {cards[card_id]['name']}: shares {ids[0]}'s product")
+                del cards[card_id]["cardmarket"]
+    return dropped
+
+
 # MARK: History
 
 def series_of(pricing):
@@ -277,9 +336,12 @@ def main():
     cm_products = get_json(CARDMARKET_PRODUCTS)["products"]
     by_expansion = {}
     for p in cm_products:
-        base = re.sub(r"\s*\[.*\]\s*$", "", p["name"]).strip().lower()
-        by_expansion.setdefault((p["idExpansion"], base), []).append(p["idProduct"])
+        by_expansion.setdefault((p["idExpansion"], canonical(cardmarket_name(p))), []).append(p["idProduct"])
     print(f"Cardmarket: {len(cm_prices)} priced products, guide of {guide.get('createdAt')}")
+    cm_dropped = check_cardmarket_links(cards, sets, cm_products)
+    print(f"Cardmarket links dropped: {len(cm_dropped)}")
+    for line in cm_dropped:
+        print("  Cardmarket link dropped: " + line)
 
     # TCGdex's links, checked: a product whose number and name both differ from the card's is
     # another card (Scorbunny → Litten); one in the card's own set with its number and name wins.
@@ -311,7 +373,7 @@ def main():
     for card in cards.values():
         if "cardmarket" not in card:
             expansion = sets[card["set"]].get("cardmarket")
-            found = by_expansion.get((expansion, card["name"].lower()), []) if expansion else []
+            found = by_expansion.get((expansion, canonical(card["name"])), []) if expansion else []
             if len(found) == 1:
                 card["cardmarket"] = found[0]
                 linked["cardmarket"] += 1
@@ -338,6 +400,23 @@ def main():
         if pricing:
             out[card_id] = pricing
             counts["any"] += 1
+
+    # The two markets far apart on a card (more than 4× on a card worth 5 or more) are flagged:
+    # one of the links, or one market's few sales, is probably off. The app says so on the card.
+    flagged = []
+    for card_id, pricing in out.items():
+        tcg = pricing.get("tcgplayer", {})
+        bases = [e.get("marketPrice") for k, e in tcg.items() if "reverse" not in k and not k.startswith("1st")]
+        cm = pricing.get("cardmarket", {})
+        trend, month = cm.get("trend"), cm.get("avg30") or cm.get("avg7")
+        eur = cm.get("avg7") if trend and month and (trend < month / 4 or trend > month * 4) else trend or cm.get("avg7")
+        if len(bases) == 1 and bases[0] and eur and max(bases[0], eur) >= 5 and max(bases[0], eur) > 4 * min(bases[0], eur):
+            pricing["check"] = True
+            flagged.append({"card": card_id, "name": cards[card_id]["name"], "usd": bases[0], "eur": eur})
+    print(f"Flagged (markets more than 4× apart): {len(flagged)}")
+    os.makedirs("out", exist_ok=True)
+    with open("out/quality.json", "w") as f:
+        json.dump({"cardmarketLinksDropped": cm_dropped, "flagged": flagged}, f, indent=1, ensure_ascii=False)
 
     # History per set: today's column added to what's published; 7- and 30-day figures from it.
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
