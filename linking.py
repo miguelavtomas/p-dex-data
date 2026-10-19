@@ -149,9 +149,19 @@ def link_cardmarket(cards, sets, cm_products, eur_of, usd_of):
     by_name = {}
     for p in cm_products:
         by_name.setdefault((p["idExpansion"], canonical(cardmarket_name(p))), []).append(p)
+    # A set's expansion: TCGdex's, or, when it has none (McDonald's 2021, Trainer Galleries), the one
+    # most of TCGdex's card links in the set point to.
+    expansion_of_product = {p["idProduct"]: p["idExpansion"] for p in cm_products}
+    seen = {}
+    for card in cards.values():
+        if (e := expansion_of_product.get(card.get("tcgdexCardmarket"))) is not None:
+            seen.setdefault(card["set"], {}).setdefault(e, 0)
+            seen[card["set"]][e] += 1
+    expansions = {sid: info.get("cardmarket") or (max(seen[sid].items(), key=lambda kv: kv[1])[0] if sid in seen else None)
+                  for sid, info in sets.items()}
     groups = {}
     for card_id, card in cards.items():
-        expansion = sets[card["set"]].get("cardmarket")
+        expansion = expansions.get(card["set"])
         if expansion:
             groups.setdefault((expansion, canonical(card["name"])), []).append(card_id)
 
