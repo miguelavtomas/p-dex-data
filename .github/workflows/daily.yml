@@ -38,8 +38,17 @@ jobs:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
         run: |
           printf '%s\n' "$SIGNING_KEY" > key.pem
-          openssl pkeyutl -sign -inkey key.pem -rawin -in out/prices.json | base64 -w0 > out/prices.json.sig
+          find out -name '*.json' | while read -r f; do
+            openssl pkeyutl -sign -inkey key.pem -rawin -in "$f" | base64 -w0 > "$f.sig"
+          done
           rm key.pem
+
+      # A copy of the history outside the site, should a bad run ever publish without it.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: history-${{ github.run_id }}
+          path: out/history
+          retention-days: 90
 
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -25,7 +25,8 @@ import time
 import unicodedata
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+import urllib.error
+from datetime import datetime, timedelta, timezone
 
 TCGCSV = "https://tcgcsv.com/tcgplayer/3"
 CARDMARKET_GUIDE = "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_6.json"
@@ -39,6 +40,8 @@ GROUP_ALIASES = {
 
 CARDMARKET_FIELDS = ["low", "trend", "avg", "avg7", "avg30"]
 MIN_PRICED = 15000
+SITE = "https://miguelavtomas.github.io/p-dex-data"
+HISTORY_DAYS = 400
 
 
 def get_json(url, tries=3):
@@ -165,6 +168,74 @@ def product_for(card, products):
     return same[0]["productId"] if len(same) == 1 else None
 
 
+# MARK: History
+
+def series_of(pricing):
+    """Today's figure for each of a card's series: TCGplayer's market price per printing, and
+    Cardmarket's trend for the base ("cm") and foil ("cm-holo") versions."""
+    series = {}
+    for key, entry in pricing.get("tcgplayer", {}).items():
+        value = entry.get("marketPrice") or entry.get("midPrice")
+        if value:
+            series[key] = value
+    cm = pricing.get("cardmarket", {})
+    for field, key in (("trend", "cm"), ("trend-holo", "cm-holo")):
+        if cm.get(field):
+            series[key] = cm[field]
+    return series
+
+
+def previous_history(set_id):
+    """The set's published history; None for a set that has none yet. Any other failure stops the
+    build: publishing without it would lose the history."""
+    try:
+        req = urllib.request.Request(f"{SITE}/history/{set_id}.json", headers={"User-Agent": "p-dex-data"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def add_day(history, day, today_series):
+    """Appends today's column (or replaces it on a second run the same day), keeping HISTORY_DAYS."""
+    history = history or {"days": [], "cards": {}}
+    days, cards = history["days"], history["cards"]
+    if days and days[-1] == day:
+        for values in (v for card in cards.values() for v in card.values()):
+            values.pop()
+        days.pop()
+    days.append(day)
+    for card_id, series in today_series.items():
+        card = cards.setdefault(card_id, {})
+        for key, value in series.items():
+            card.setdefault(key, [None] * (len(days) - 1))
+    for card_id, card in cards.items():
+        for key, values in card.items():
+            values.append(round(today_series.get(card_id, {}).get(key), 2) if key in today_series.get(card_id, {}) else None)
+    cut = max(0, len(days) - HISTORY_DAYS)
+    history["days"] = days[cut:]
+    history["cards"] = {cid: {k: v[cut:] for k, v in card.items() if any(x is not None for x in v[cut:])}
+                        for cid, card in cards.items()}
+    history["cards"] = {cid: card for cid, card in history["cards"].items() if card}
+    return history
+
+
+def value_ago(history, card_id, key, days_ago):
+    """The figure from `days_ago` days back (the nearest day on or before, at most 3 days earlier)."""
+    days = history["days"]
+    target = datetime.strptime(days[-1], "%Y-%m-%d") - timedelta(days=days_ago)
+    values = history["cards"].get(card_id, {}).get(key)
+    if not values:
+        return None
+    for i in range(len(days) - 1, -1, -1):
+        day = datetime.strptime(days[i], "%Y-%m-%d")
+        if day <= target:
+            return values[i] if (target - day).days <= 3 else None
+    return None
+
+
 # MARK: Build
 
 def main():
@@ -267,6 +338,34 @@ def main():
         if pricing:
             out[card_id] = pricing
             counts["any"] += 1
+
+    # History per set: today's column added to what's published; 7- and 30-day figures from it.
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    by_set = {}
+    for card_id, pricing in out.items():
+        by_set.setdefault(cards[card_id]["set"], {})[card_id] = series_of(pricing)
+    with ThreadPoolExecutor(8) as pool:
+        previous = dict(zip(by_set, pool.map(previous_history, list(by_set))))
+    os.makedirs("out/history", exist_ok=True)
+    history_days = 0
+    for set_id, series in by_set.items():
+        history = add_day(previous[set_id], day, series)
+        history_days = max(history_days, len(history["days"]))
+        for card_id, pricing in ((cid, out[cid]) for cid in series):
+            for key, entry in pricing.get("tcgplayer", {}).items():
+                for n in (7, 30):
+                    ago = value_ago(history, card_id, key, n)
+                    if ago:
+                        entry[f"marketPrice{n}d"] = ago
+            cm = pricing.get("cardmarket", {})
+            for field, key in (("trend", "cm"), ("trend-holo", "cm-holo")):
+                for n in (7, 30):
+                    ago = value_ago(history, card_id, key, n)
+                    if ago and field in cm:
+                        cm[f"{field}-{n}d"] = ago
+        with open(f"out/history/{set_id}.json", "w") as f:
+            json.dump(history, f, separators=(",", ":"))
+    print(f"History: {len(by_set)} sets, up to {history_days} days")
 
     os.makedirs("out", exist_ok=True)
     doc = {
