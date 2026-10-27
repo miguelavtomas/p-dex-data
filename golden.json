@@ -1,6 +1,159 @@
 {
-  "30th-155": {"tcgplayer": 716232, "cardmarket": 907759, "why": "Jirachi ex SIR: TCGplayer 716232 (JustTCG, tcgcsv), Cardmarket all three votes"},
-  "2021swsh-6": {"tcgplayer": 232321, "why": "Chespin 6/25, the user's TCGplayer link"},
-  "2021swsh-4": {"tcgplayer": 232319, "why": "Turtwig 4/25, tcgcsv name and number"},
-  "base1-4": {"cardmarket": 273699, "why": "Base Set Charizard, the regular product (not the 3,330 € one)"}
+ "30th-155": {
+  "tcgplayer": 716232,
+  "cardmarket": 907759,
+  "why": "Jirachi ex SIR: TCGplayer 716232 (JustTCG, tcgcsv), Cardmarket all three votes"
+ },
+ "2021swsh-6": {
+  "tcgplayer": 232321,
+  "why": "Chespin 6/25, the user's TCGplayer link"
+ },
+ "2021swsh-4": {
+  "tcgplayer": 232319,
+  "why": "Turtwig 4/25, tcgcsv name and number"
+ },
+ "base1-4": {
+  "cardmarket": 273699,
+  "why": "Base Set Charizard, the regular product (not the 3,330 € one)"
+ },
+ "30th-R": {
+  "cardmarket": 909509,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-B": {
+  "cardmarket": 909511,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "lc-3": {
+  "cardmarket": 855023,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-152": {
+  "cardmarket": 908354,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-144": {
+  "cardmarket": 907751,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "2021swsh-1": {
+  "cardmarket": 538778,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-130": {
+  "cardmarket": 907738,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-139": {
+  "cardmarket": 907747,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-132": {
+  "cardmarket": 907740,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-133": {
+  "cardmarket": 907741,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "2021swsh-18": {
+  "cardmarket": 538948,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "2021swsh-24": {
+  "cardmarket": 539008,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "mep-101": {
+  "cardmarket": 895604,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "2021swsh-22": {
+  "cardmarket": 538988,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "2021swsh-7": {
+  "cardmarket": 538838,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "2021swsh-8": {
+  "cardmarket": 538848,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "mep-100": {
+  "cardmarket": 895612,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-027": {
+  "cardmarket": 907634,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-023": {
+  "cardmarket": 907630,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-039": {
+  "cardmarket": 907646,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-024": {
+  "cardmarket": 907631,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "mep-099": {
+  "cardmarket": 895611,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-065": {
+  "cardmarket": 907672,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-011": {
+  "cardmarket": 907617,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-017": {
+  "cardmarket": 907623,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-018": {
+  "cardmarket": 907624,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-061": {
+  "cardmarket": 907668,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-055": {
+  "cardmarket": 907662,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-112": {
+  "cardmarket": 907719,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-073": {
+  "cardmarket": 907680,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-075": {
+  "cardmarket": 907682,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-122": {
+  "cardmarket": 907729,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-002": {
+  "cardmarket": 907608,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-094": {
+  "cardmarket": 907701,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ },
+ "30th-085": {
+  "cardmarket": 907692,
+  "why": "Checked by hand on Cardmarket (verification sheet, 27 Oct 2026)"
+ }
 }

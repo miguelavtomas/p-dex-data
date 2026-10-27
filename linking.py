@@ -117,14 +117,29 @@ def fits_tcgplayer(card, product):
     return product["number"] is None or plain_number(product["number"]) == plain_number(card["localId"])
 
 
-def link_tcgplayer(cards, sets, groups, group_products, aliases):
+def link_by_name(card, products):
+    """Reprint sets (Classic Collections) keep each card's original number on TCGplayer, so they're
+    matched by name alone: the one product with the card's name, or with exactly its name."""
+    fits = [p for p in products if same_name(card["name"], p["name"])]
+    if len(fits) > 1:
+        bare = lambda s: canonical(re.sub(r"\(.*?\)", "", s))
+        fits = [p for p in fits if bare(p["name"]) == bare(card["name"])]
+    return fits[0] if len(fits) == 1 else None
+
+
+def link_tcgplayer(cards, sets, groups, group_products, aliases, name_only=()):
     """card id → (product id, method). Set → number → name; TCGdex's link only to choose among
-    several equally good products, or when the card's set has no group."""
+    several equally good products, or when the card's set has no group. Sets in `name_only` are
+    matched by name (link_by_name)."""
     products = {p["productId"]: p for ps in group_products.values() for p in ps}
     set_groups = {sid: group_for(sid, info, groups, aliases) for sid, info in sets.items()}
     links = {}
     for card_id, card in cards.items():
         group = set_groups.get(card["set"])
+        if card["set"] in name_only:
+            if group and (p := link_by_name(card, group_products.get(group, []))):
+                links[card_id] = (p["productId"], "set+name (reprint numbers)")
+            continue
         theirs = card.get("tcgdexTcgplayer")
         candidates = [p for p in group_products.get(group, []) if fits_tcgplayer(card, p)] if group else []
         if len(candidates) > 1:
@@ -225,11 +240,17 @@ def link_cardmarket(cards, sets, cm_products, eur_of, usd_of):
 
 # MARK: Hand corrections
 
+def load_overrides(path="overrides.json"):
+    return json.load(open(path)) if os.path.exists(path) else {}
+
+
 def apply_overrides(links, market, path="overrides.json"):
-    """overrides.json: {"card id": {"tcgplayer": 123 or null, "cardmarket": 456 or null, "why": "…"}}."""
-    if not os.path.exists(path):
+    """overrides.json: {"card id": {"tcgplayer": 123 or null, "cardmarket": 456 or null,
+    "cardmarketHolo": 789 (the holo as its own product), "cardmarketStamped": 012 (a stamped
+    printing, not priced yet), "why": "…"}}."""
+    overrides = load_overrides(path)
+    if not overrides:
         return 0
-    overrides = json.load(open(path))
     for card_id, entry in overrides.items():
         if market in entry:
             if entry[market] is None:

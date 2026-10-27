@@ -37,7 +37,11 @@ CARDMARKET_PRODUCTS = "https://downloads.s3.cardmarket.com/productCatalog/produc
 GROUP_ALIASES = {
     "2021swsh": "McDonald's 25th Anniversary Promos",
     "mep": "ME: Mega Evolution Promo",
+    "30th-c": "ME: 30th Celebration Classic Collection",
+    "cel25cc": "Celebrations: Classic Collection",
 }
+# Reprint sets whose cards keep their original numbers on TCGplayer: matched by name.
+NAME_ONLY_SETS = {"30th-c", "cel25cc"}
 
 CARDMARKET_FIELDS = ["low", "trend", "avg", "avg7", "avg30"]
 MIN_PRICED = 15000
@@ -269,7 +273,7 @@ def main():
     print(f"Cardmarket: {len(cm_prices)} priced products, guide of {guide.get('createdAt')}")
 
     # The links, built from what each source says (see linking.py), then hand corrections.
-    tcg_links = linking.link_tcgplayer(cards, sets, groups, group_products, GROUP_ALIASES)
+    tcg_links = linking.link_tcgplayer(cards, sets, groups, group_products, GROUP_ALIASES, NAME_ONLY_SETS)
     tcg_overrides = linking.apply_overrides(tcg_links, "tcgplayer")
 
     def usd_of(card_id):
@@ -304,6 +308,7 @@ def main():
         card["tcgplayer"] = tcg_links.get(card_id, (None,))[0]
         card["cardmarket"] = cm_links.get(card_id, (None,))[0]
 
+    holo_products = {cid: e["cardmarketHolo"] for cid, e in linking.load_overrides().items() if e.get("cardmarketHolo")}
     out = {}
     counts = {"tcgplayer": 0, "cardmarket": 0, "any": 0}
     for card_id, card in sorted(cards.items()):
@@ -319,6 +324,12 @@ def main():
                 for key in (f, f + "-holo"):
                     if cm.get(key):
                         fields[key] = cm[key]
+            # Older sets list the holo / reverse holo as a product of its own: its figures are the
+            # card's "-holo" fields (overrides.json "cardmarketHolo", checked by hand).
+            holo = cm_prices.get(holo_products.get(card_id)) or {}
+            for f in CARDMARKET_FIELDS:
+                if holo.get(f):
+                    fields[f + "-holo"] = holo[f]
             if fields:
                 pricing["cardmarket"] = fields
                 counts["cardmarket"] += 1
