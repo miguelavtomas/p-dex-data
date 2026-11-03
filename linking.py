@@ -92,6 +92,12 @@ def same_cardmarket_name(ours, theirs):
     return difflib.SequenceMatcher(None, a, b).ratio() >= 0.85 and len(a.split()) == len(b.split())
 
 
+# Sets where Cardmarket added the lettered cards before the numbered ones: Aquapolis and Skyridge's
+# holo H cards, Call of Legends' shiny SL legends. Checked against prices on 2026-11-03: the order
+# vote had every one of them swapped with the regular card, and so had TCGdex's links.
+LETTERS_FIRST = {"ecard2", "ecard3", "col1"}
+
+
 def number_key(card):
     """Collector order: "TG07" after "TG06", "100" after "99", "74a" before "74b"."""
     m = re.match(r"(\D*)(\d+)(.*)", card["localId"])
@@ -212,16 +218,20 @@ def link_cardmarket(cards, sets, cm_products, eur_of, usd_of):
             # Cardmarket without attack names for these: every product with the name is a candidate.
             if not ps:
                 ps = unplaced if unplaced else products
-            ids = sorted(ids, key=lambda i: number_key(cards[i]))
+            ids = sorted(ids, key=lambda i: (cards[i]["set"] in LETTERS_FIRST and number_key(cards[i])[0] == "",
+                                             number_key(cards[i])))
             ps = sorted(ps, key=lambda p: p["idProduct"])
             if len(ids) == 1 and len(ps) == 1:
                 links[ids[0]] = (ps[0]["idProduct"], "expansion+name" + ("+attacks" if sig else ""))
                 continue
             by_order = dict(zip(ids, (p["idProduct"] for p in ps))) if len(ids) == len(ps) else {}
+            # A lettered card and a numbered one in a set that lists letters first: TCGdex's links
+            # swap the two as well, so the order is trusted instead.
+            letters_first = (cards[ids[0]]["set"] in LETTERS_FIRST and len({number_key(cards[i])[0] == "" for i in ids}) == 2)
             for card_id in ids:
                 votes = {}
                 for source, product in (("order", by_order.get(card_id)),
-                                        ("TCGdex", cards[card_id].get("tcgdexCardmarket")),
+                                        ("TCGdex", None if letters_first else cards[card_id].get("tcgdexCardmarket")),
                                         ("price", price_vote(card_id, ps))):
                     if product in {p["idProduct"] for p in ps}:
                         votes.setdefault(product, []).append(source)
@@ -231,6 +241,8 @@ def link_cardmarket(cards, sets, cm_products, eur_of, usd_of):
                 elif best and best[1] == ["TCGdex"] and len(votes) == 1:
                     # TCGdex's pick among same-name, same-attack products, with nothing against it.
                     links[card_id] = (best[0], "TCGdex, unopposed")
+                elif best and best[1] == ["order"] and len(votes) == 1 and letters_first:
+                    links[card_id] = (best[0], "order, unopposed")
     # One product, one card per set: a product two cards share stays with the better-voted one.
     owners = {}
     for card_id, (product, method) in sorted(links.items(), key=lambda kv: (-kv[1][1].count(","), number_key(cards[kv[0]]))):
