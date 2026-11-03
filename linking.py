@@ -65,11 +65,13 @@ def canonical(name):
 
 def cardmarket_name(product):
     """"Mew [Clairvoyance | Psychic]" → "Mew"; "Floatzel Lv.29" → "Floatzel"; "Muk (V.2)" → "Muk";
-    "Professor's Research - Professor Sada" → "Professor's Research"."""
+    "Professor's Research - Professor Sada" → "Professor's Research"; "MCharizard EX" → "M Charizard EX"
+    (Cardmarket writes Mega EX cards without the space; looked up by name, they matched nothing)."""
     name = re.sub(r"\s*\[[^\[\]]*\]\s*$", "", product["name"])  # the attacks, last
     name = re.sub(r"\[([^\[\]|]{1,3})\]", r"\1", name)            # "Unown [M]", "Chatot [G]", "[FB]"
     name = re.sub(r"\s+-\s+.*$", "", name)
     name = re.sub(r"\s+Lv\.?\s*(\d+|X)\b", lambda m: " LV.X" if m.group(1) == "X" else "", name)
+    name = re.sub(r"^M(?=[A-Z][a-z])", "M ", name)
     return re.sub(r"\s*\(V\.\d+\)", "", name).strip()
 
 
