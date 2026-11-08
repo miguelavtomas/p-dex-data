@@ -181,16 +181,27 @@ def series_of(pricing):
 
 
 def previous_history(set_id):
-    """The set's published history; None for a set that has none yet. Any other failure stops the
-    build: publishing without it would lose the history."""
-    try:
-        req = urllib.request.Request(f"{SITE}/history/{set_id}.json", headers={"User-Agent": "p-dex-data"})
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
+    """The set's published history; None for a set that has none yet. Pages sometimes answers 503
+    (it did on 2026-11-07 and 11-08, failing the run), so a server error or a dropped connection is
+    tried again for about 10 minutes. Any other failure stops the build: publishing without it would
+    lose the history."""
+    req = urllib.request.Request(f"{SITE}/history/{set_id}.json", headers={"User-Agent": "p-dex-data"})
+    waits = [15, 30, 60, 120, 240, 0]
+    for attempt, wait in enumerate(waits, 1):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            if e.code < 500 or attempt == len(waits):
+                raise
+            print(f"history/{set_id}.json: HTTP {e.code}, trying again in {wait} s")
+        except (urllib.error.URLError, TimeoutError) as e:
+            if attempt == len(waits):
+                raise
+            print(f"history/{set_id}.json: {e}, trying again in {wait} s")
+        time.sleep(wait)
 
 
 def add_day(history, day, today_series):
